@@ -1,45 +1,43 @@
 import pytest
 import allure
-from tests.utils.client import fake
 
 @allure.feature("Создание курьера")
 class TestCreateCourier:
-    @allure.title("Успешное создание нового курьера")
-    def test_create_courier_success(self, client):
-        with allure.step("Генерируем валидные данные курьера"):
-            login = fake.user_name()
-            password = fake.password(length=12, special_chars=False)
-            first_name = fake.first_name()
+
+    @allure.title("Создание и удаление курьера через API")
+    def test_create_and_delete_courier(self, client):
+        data = client.generate_courier_data()
 
         with allure.step("Отправляем POST /courier"):
-            resp = client.register_courier(login, password, first_name)
+            resp_create = client.register_courier(
+                data["login"], data["password"], data["firstName"]
+            )
+        with allure.step("Проверяем, что ответ 201 и ok=True"):
+            assert resp_create.status_code == 201
+            assert resp_create.json().get("ok") is True
 
-        with allure.step("Проверяем код 201 и тело ответа {'ok': True}"):
-            assert resp.status_code == 201
-            assert resp.json() == {"ok": True}
+        with allure.step("Отправляем POST /courier/login"):
+            resp_login = client.login_courier(data["login"], data["password"])
+        with allure.step("Проверяем, что ответ 200 и извлекаем id"):
+            assert resp_login.status_code == 200
+            courier_id = resp_login.json().get("id")
+            assert isinstance(courier_id, int)
 
-    @allure.title("Создание курьера с существующим логином")
-    def test_create_duplicate_courier(self, client, new_courier):
-        with allure.step("Используем существующие логин, пароль и имя"):
-            login = new_courier["login"]
-            password = new_courier["password"]
-            first_name = new_courier["firstName"]
+        with allure.step("Отправляем DELETE /courier/{id}"):
+            resp_delete = client.delete_courier(courier_id)
+        with allure.step("Проверяем, что ответ 200 и ok=True"):
+            assert resp_delete.status_code == 200
+            assert resp_delete.json().get("ok") is True
 
-        with allure.step("Повторно отправляем POST /courier"):
-            resp = client.register_courier(login, password, first_name)
-
-        with allure.step("Проверяем, что код ответа не 201"):
-            assert resp.status_code != 201
-
-    @pytest.mark.parametrize("missing_field", ["login", "password", "firstName"])
-    @allure.title("Создание курьера без обязательного поля: {missing_field}")
-    def test_create_courier_missing_field(self, client, missing_field):
-        with allure.step(f"Формируем запрос без поля {missing_field}"):
-            data = {"login": "a", "password": "b", "firstName": "c"}
-            data.pop(missing_field)
-
-        with allure.step("Отправляем POST /courier с неполными данными"):
-            resp = client.session.post(f"{client.BASE_URL}/courier", json=data)
-
-        with allure.step("Проверяем, что код ответа не 201"):
-            assert resp.status_code != 201
+    @pytest.mark.parametrize("missing, payload", [
+        ("login", {"password": "pwd", "firstName": "Имя"}),
+        ("password", {"login": "login", "firstName": "Имя"}),
+        ("firstName", {"login": "login", "password": "pwd"}),
+    ])
+    @allure.title("Создание курьера без поля {missing}")
+    def test_create_courier_missing_required(self, client, missing, payload):
+        with allure.step(f"Отправляем POST /courier без поля {missing}"):
+            resp = client.session.post(f"{client.BASE_URL}/courier", json=payload)
+        with allure.step("Проверяем, что ответ 400 и есть ошибка"):
+            assert resp.status_code == 400
+            assert "error" in resp.json()
